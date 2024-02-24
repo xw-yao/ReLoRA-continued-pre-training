@@ -1,0 +1,40 @@
+# dataset
+megatron_dataset_config: configs/pythia-1b-deduped.yml
+max_length: 512
+workers: 8
+
+# model
+model_name_or_path: EleutherAI/pythia-1b-deduped
+model_revision: step110000
+
+# saving
+save_dir: checkpoints/relora_1b_deduped_110k
+autoresume: true
+
+# ReLoRA
+use_peft: true
+force_keep_original: true
+lora_r: 128
+relora: 2000
+restart_warmup_steps: 100
+reset_optimizer_on_relora: false
+optimizer_magnitude_pruning: 0.9
+
+# Optimization
+optimizer: adam
+batch_size: 8
+total_batch_size: 1024
+lr: 5e-5
+weight_decay: 0.01
+scheduler: cosine_restarts
+cycle_length: 2000
+warmup_steps: 500  # used to be 13_000, but reduced it to comply with the scheduler
+num_training_steps: 10_000  # used to be 133_000, but it's an ugly number
+eval_every: 2000
+save_every: 2000
+
+# Misc
+dtype: bfloat16
+distributed_type: ddp
+tags: relora_1b_110k_lr_debug
+comment: "Debug loss explosion on pythia 1b 110k checkpoint for lr"
