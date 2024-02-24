@@ -759,7 +759,7 @@ def main(args):
 
     prof = maybe_make_profiler(args)
 
-    logger.info(f"Starting training at update step {update_step} with {args.num_training_steps - update_step} update steps")
+    logger.info(f"Starting training at update step {update_step} with {args.num_training_steps - update_step} update steps, and global step: {global_step} ")
     if global_rank == 0:
         # fix tqdm visual length to 80 so that the progress bar
         # doesn't jump around when changing from external display to laptop
@@ -805,7 +805,7 @@ def main(args):
         if args.clip_grad_norm > 0:
             grad_norm = torch.nn.utils.clip_grad_norm_(trainable_params, args.clip_grad_norm, error_if_nonfinite=True)
             if global_rank == 0:
-                wandb.log({"grad_norm": grad_norm.item()}, step=global_step)
+                wandb.log({"grad_norm": grad_norm.item()}, step=update_step)
 
         dist.all_reduce(loss_info, op=dist.ReduceOp.SUM)
         _loss = loss_info[0] / loss_info[1]  # loss to log in wandb below
@@ -823,6 +823,7 @@ def main(args):
 
         optimizer.zero_grad()
         update_step += 1
+        #logger.info(f"global steps: {global_step}, update steps: {update_step}")
         update_time = time.time() - update_time
 
         loss_info = torch.zeros_like(loss_info)
@@ -862,7 +863,7 @@ def main(args):
                     "final_eval_loss": total_loss,
                     "final_eval_tokens": evaluated_on_tokens,
                     },
-                    step=global_step,
+                    step=update_step,
                 )
             logger.info(f"Eval loss at step {update_step}: {total_loss}")
         # ##############################
@@ -924,7 +925,7 @@ def main(args):
             wandb.log({
                 "loss": _loss,
                 "lr": lr,
-                "update_step": update_step,
+                #"update_step": update_step,
                 "tokens_seen": tokens_seen,
                 "throughput_tokens": tokens_in_update / update_time,
                 "throughput_examples": args.total_batch_size / update_time,
@@ -932,14 +933,14 @@ def main(args):
                 "n_lora_restarts": n_lora_restarts,
                 "n_optimizer_resets": n_optimizer_resets,
                 },
-                step=global_step,
+                step=update_step,
             )
             if args.train_scaling:
                 all_scaling_factors = []
                 for module in model.modules():
                     if isinstance(module, ReLoRaLinear):
                         all_scaling_factors.append(module.scaling.data.item())
-                wandb.log({"lora_scaling": torch.tensor(all_scaling_factors)}, step=global_step)
+                wandb.log({"lora_scaling": torch.tensor(all_scaling_factors)}, step=update_step)
         update_time = time.time()
         if prof is not None: prof.step()
     else: # for-else statement
@@ -981,6 +982,18 @@ def main(args):
     import gc; gc.collect()
     torch.cuda.empty_cache()
 
+    #log full batch loss
+    full_batch_loss, evaluated_on_tokens = evaluate_model(
+        model, train_loader, device, target_eval_tokens=tokens_seen
+    )
+    wandb.log({
+        "full_batch_loss": full_batch_loss,
+        "full_batch_eval_tokens": evaluated_on_tokens,
+         },
+         step=update_step
+        )
+
+
     total_loss, evaluated_on_tokens = evaluate_model(
         model, eval_loader, device,
         target_eval_tokens=100_000_000,
@@ -991,7 +1004,7 @@ def main(args):
             "final_eval_loss": total_loss,
             "final_eval_tokens": evaluated_on_tokens,
             },
-            step=global_step,
+            step=update_step,
         )
         logger.info(f"Final eval loss: {total_loss}")
 
@@ -1007,7 +1020,7 @@ def main(args):
                 "final_test_loss": total_loss,
                 "final_test_tokens": evaluated_on_tokens,
                 },
-                step=global_step,
+                step=update_step,
             )
             logger.info(f"Test loss: {total_loss}")
 
