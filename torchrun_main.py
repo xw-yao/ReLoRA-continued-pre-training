@@ -783,7 +783,7 @@ def main(args):
 
         ##################### Added by XY ##################################################
         # weight matrices for linear projections
-        _model = model.wrapped_model.gpt_neox if args.use_peft else model.module.model
+        _model = model.module.wrapped_model.gpt_neox if args.use_peft else model.module.model
 
         layer_qkv_W0 = _model.layers[2].attention.query_key_value.weight
         layer_dense_W0 = _model.layers[2].attention.dense.weight
@@ -970,6 +970,17 @@ def main(args):
             dense_W_norm_update = (layer_dense_W0 - layer_dense_Wi)
             mlp_h24h_W_norm_update = (layer_mlp_h24h_W0 - layer_mlp_h24h_Wi)
             mlp_4h2h_W_norm_update = (layer_mlp_4h2h_W0 - layer_mlp_4h2h_Wi)
+
+
+            if global_rank == 0:
+                wandb.log({
+                    "qkv_W_norm_update": qkv_W_norm_update.norm().item(),
+                    "dense_W_norm_update": dense_W_norm_update.norm().item(),
+                    "mlp_h24h_W_norm_update": mlp_h24h_W_norm_update.norm().item(),
+                    "mlp_4h2h_W_norm_update": mlp_4h2h_W_norm_update.norm().item(),
+                },
+                    step=update_step,
+                )
             #####################################################################################
 
 
@@ -979,38 +990,38 @@ def main(args):
         tokens_seen_before = tokens_seen
         batches_in_update = args.gradient_accumulation * world_size
 
+        ##################### Added by XY ##################################################
+        # update of WaWb
+        if args.use_peft:
+            qkv_Wa_i = _model.layers[2].attention.query_key_value.lora_A.weight
+            qkv_Wb_i = _model.layers[2].attention.query_key_value.lora_B.weight
+            #qkv_WaWb_i = qkv_Wa_i.T @ qkv_Wb_i.T
+
+            dense_Wa_i = _model.layers[2].attention.dense.lora_A.weight
+            dense_Wb_i = _model.layers[2].attention.dense.lora_B.weight
+            #dense_WaWb_i = dense_Wa_i.T @ dense_Wb_i.T
+
+            mlp_h24h_Wa_i = _model.layers[2].mlp.dense_h_to_4h.lora_A.weight
+            mlp_h24h_Wb_i = _model.layers[2].mlp.dense_h_to_4h.lora_B.weight
+            #mlp_h24h_WaWb_i = mlp_h24h_Wa_i.T @ mlp_h24h_Wb_i.T
+
+            mlp_4h2h_Wa_i = _model.layers[2].mlp.dense_4h_to_h.lora_A.weight
+            mlp_4h2h_Wb_i = _model.layers[2].mlp.dense_4h_to_h.lora_B.weight
+            #mlp_4h2h_WaWb_i = mlp_4h2h_Wa_i.T @ mlp_4h2h_Wb_i.T
+
+            qkv_Wa_norm_update = (qkv_Wa_0 - qkv_Wa_i)
+            dense_Wa_norm_update = (dense_Wa_0 - dense_Wa_i)
+            mlp_h24h_Wa_norm_update = (mlp_h24h_Wa_0 - mlp_h24h_Wa_i)
+            mlp_4h2h_Wa_norm_update = (mlp_4h2h_Wa_0 - mlp_4h2h_Wa_i)
+
+            qkv_Wb_norm_update = (qkv_Wb_0 - qkv_Wb_i)
+            dense_Wb_norm_update = (dense_Wb_0 - dense_Wb_i)
+            mlp_h24h_Wb_norm_update = (mlp_h24h_Wb_0 - mlp_h24h_Wb_i)
+            mlp_4h2h_Wb_norm_update = (mlp_4h2h_Wb_0 - mlp_4h2h_Wb_i)
+
+        ##################### Added by XY ##################################################
+
         if global_rank == 0:
-            ##################### Added by XY ##################################################
-            # update of WaWb
-            if args.use_peft:
-                qkv_Wa_i = _model.layers[2].attention.query_key_value.lora_A.weight
-                qkv_Wb_i = _model.layers[2].attention.query_key_value.lora_B.weight
-                #qkv_WaWb_i = qkv_Wa_i.T @ qkv_Wb_i.T
-
-                dense_Wa_i = _model.layers[2].attention.dense.lora_A.weight
-                dense_Wb_i = _model.layers[2].attention.dense.lora_B.weight
-                #dense_WaWb_i = dense_Wa_i.T @ dense_Wb_i.T
-
-                mlp_h24h_Wa_i = _model.layers[2].mlp.dense_h_to_4h.lora_A.weight
-                mlp_h24h_Wb_i = _model.layers[2].mlp.dense_h_to_4h.lora_B.weight
-                #mlp_h24h_WaWb_i = mlp_h24h_Wa_i.T @ mlp_h24h_Wb_i.T
-
-                mlp_4h2h_Wa_i = _model.layers[2].mlp.dense_4h_to_h.lora_A.weight
-                mlp_4h2h_Wb_i = _model.layers[2].mlp.dense_4h_to_h.lora_B.weight
-                #mlp_4h2h_WaWb_i = mlp_4h2h_Wa_i.T @ mlp_4h2h_Wb_i.T
-
-                qkv_Wa_norm_update = (qkv_Wa_0 - qkv_Wa_i)
-                dense_Wa_norm_update = (dense_Wa_0 - dense_Wa_i)
-                mlp_h24h_Wa_norm_update = (mlp_h24h_Wa_0 - mlp_h24h_Wa_i)
-                mlp_4h2h_Wa_norm_update = (mlp_4h2h_Wa_0 - mlp_4h2h_Wa_i)
-
-                qkv_Wb_norm_update = (qkv_Wb_0 - qkv_Wb_i)
-                dense_Wb_norm_update = (dense_Wb_0 - dense_Wb_i)
-                mlp_h24h_Wb_norm_update = (mlp_h24h_Wb_0 - mlp_h24h_Wb_i)
-                mlp_4h2h_Wb_norm_update = (mlp_4h2h_Wb_0 - mlp_4h2h_Wb_i)
-
-            ##################### Added by XY ##################################################
-
             wandb.log({
                 "loss": _loss,
                 "lr": lr,
@@ -1025,10 +1036,6 @@ def main(args):
                 "init_dense_Wa_norm": dense_Wa_0.norm().item(),
                 "init_mlp_h24h_Wa_norm": mlp_h24h_Wa_0.norm().item(),
                 "init_mlp_4h2h_Wa_norm": mlp_4h2h_Wa_0.norm().item(),
-                "qkv_W_norm_update": qkv_W_norm_update.norm().item(),
-                "dense_W_norm_update": dense_W_norm_update.norm().item(),
-                "mlp_h24h_W_norm_update": mlp_h24h_W_norm_update.norm().item(),
-                "mlp_4h2h_W_norm_update": mlp_4h2h_W_norm_update.norm().item(),
                 "qkv_Wa_norm_update": qkv_Wa_norm_update.norm().item(),
                 "dense_Wa_norm_update": dense_Wa_norm_update.norm().item(),
                 "mlp_h24h_Wa_norm_update": mlp_h24h_Wa_norm_update.norm().item(),
