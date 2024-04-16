@@ -794,19 +794,19 @@ def main(args):
         if args.use_peft:
             qkv_Wa_0 = _model.layers[2].attention.query_key_value.lora_A.weight
             qkv_Wb_0 = _model.layers[2].attention.query_key_value.lora_B.weight
-            qkv_WaWb_0 = qkv_Wa_0.T @ qkv_Wb_0.T
+            #qkv_WaWb_0 = qkv_Wa_0.T @ qkv_Wb_0.T
 
             dense_Wa_0 = _model.layers[2].attention.dense.lora_A.weight
             dense_Wb_0 = _model.layers[2].attention.dense.lora_B.weight
-            dense_WaWb_0 = dense_Wa_0.T @ dense_Wb_0.T
+            #dense_WaWb_0 = dense_Wa_0.T @ dense_Wb_0.T
 
             mlp_h24h_Wa_0 = _model.layers[2].mlp.dense_h_to_4h.lora_A.weight
             mlp_h24h_Wb_0 = _model.layers[2].mlp.dense_h_to_4h.lora_B.weight
-            mlp_h24h_WaWb_0 = mlp_h24h_Wa_0.T @ mlp_h24h_Wb_0.T
+            #mlp_h24h_WaWb_0 = mlp_h24h_Wa_0.T @ mlp_h24h_Wb_0.T
 
             mlp_4h2h_Wa_0 = _model.layers[2].mlp.dense_4h_to_h.lora_A.weight
             mlp_4h2h_Wb_0 = _model.layers[2].mlp.dense_4h_to_h.lora_B.weight
-            mlp_4h2h_WaWb_0 = mlp_4h2h_Wa_0.T @ mlp_4h2h_Wb_0.T
+            #mlp_4h2h_WaWb_0 = mlp_4h2h_Wa_0.T @ mlp_4h2h_Wb_0.T
 
         ####################################################################################
     for batch in train_loader:
@@ -985,24 +985,29 @@ def main(args):
             if args.use_peft:
                 qkv_Wa_i = _model.layers[2].attention.query_key_value.lora_A.weight
                 qkv_Wb_i = _model.layers[2].attention.query_key_value.lora_B.weight
-                qkv_WaWb_i = qkv_Wa_i.T @ qkv_Wb_i.T
+                #qkv_WaWb_i = qkv_Wa_i.T @ qkv_Wb_i.T
 
                 dense_Wa_i = _model.layers[2].attention.dense.lora_A.weight
                 dense_Wb_i = _model.layers[2].attention.dense.lora_B.weight
-                dense_WaWb_i = dense_Wa_i.T @ dense_Wb_i.T
+                #dense_WaWb_i = dense_Wa_i.T @ dense_Wb_i.T
 
                 mlp_h24h_Wa_i = _model.layers[2].mlp.dense_h_to_4h.lora_A.weight
                 mlp_h24h_Wb_i = _model.layers[2].mlp.dense_h_to_4h.lora_B.weight
-                mlp_h24h_WaWb_i = mlp_h24h_Wa_i.T @ mlp_h24h_Wb_i.T
+                #mlp_h24h_WaWb_i = mlp_h24h_Wa_i.T @ mlp_h24h_Wb_i.T
 
                 mlp_4h2h_Wa_i = _model.layers[2].mlp.dense_4h_to_h.lora_A.weight
                 mlp_4h2h_Wb_i = _model.layers[2].mlp.dense_4h_to_h.lora_B.weight
-                mlp_4h2h_WaWb_i = mlp_4h2h_Wa_i.T @ mlp_4h2h_Wb_i.T
+                #mlp_4h2h_WaWb_i = mlp_4h2h_Wa_i.T @ mlp_4h2h_Wb_i.T
 
-                qkv_WaWb_norm_update = (qkv_WaWb_0 - qkv_WaWb_i)
-                dense_WaWb_norm_update = (dense_WaWb_0- dense_WaWb_i)
-                mlp_h24h_WaWb_norm_update = (mlp_h24h_WaWb_0 - mlp_h24h_WaWb_i)
-                mlp_4h2h_WaWb_norm_update = (mlp_4h2h_WaWb_0 - mlp_4h2h_WaWb_i)
+                qkv_Wa_norm_update = (qkv_Wa_0 - qkv_Wa_i)
+                dense_Wa_norm_update = (dense_Wa_0 - dense_Wa_i)
+                mlp_h24h_Wa_norm_update = (mlp_h24h_Wa_0 - mlp_h24h_Wa_i)
+                mlp_4h2h_Wa_norm_update = (mlp_4h2h_Wa_0 - mlp_4h2h_Wa_i)
+
+                qkv_Wb_norm_update = (qkv_Wb_0 - qkv_Wb_i)
+                dense_Wb_norm_update = (dense_Wb_0 - dense_Wb_i)
+                mlp_h24h_Wb_norm_update = (mlp_h24h_Wb_0 - mlp_h24h_Wb_i)
+                mlp_4h2h_Wb_norm_update = (mlp_4h2h_Wb_0 - mlp_4h2h_Wb_i)
 
             ##################### Added by XY ##################################################
 
@@ -1016,14 +1021,22 @@ def main(args):
                 "throughput_batches": batches_in_update / update_time,
                 "n_lora_restarts": n_lora_restarts,
                 "n_optimizer_resets": n_optimizer_resets,
+                "init_qkv_Wa_norm": qkv_Wa_0.norm().item(),
+                "init_dense_Wa_norm": dense_Wa_0.norm().item(),
+                "init_mlp_h24h_Wa_norm": mlp_h24h_Wa_0.norm().item(),
+                "init_mlp_4h2h_Wa_norm": mlp_4h2h_Wa_0.norm().item(),
                 "qkv_W_norm_update": qkv_W_norm_update.norm().item(),
                 "dense_W_norm_update": dense_W_norm_update.norm().item(),
                 "mlp_h24h_W_norm_update": mlp_h24h_W_norm_update.norm().item(),
                 "mlp_4h2h_W_norm_update": mlp_4h2h_W_norm_update.norm().item(),
-                "qkv_WaWb_norm_update": qkv_WaWb_norm_update.norm().item(),
-                "dense_WaWb_norm_update": dense_WaWb_norm_update.norm().item(),
-                "mlp_h24h_WaWb_norm_update": mlp_h24h_WaWb_norm_update.norm().item(),
-                "mlp_4h2h_WaWb_norm_update": mlp_4h2h_WaWb_norm_update.norm().item(),
+                "qkv_Wa_norm_update": qkv_Wa_norm_update.norm().item(),
+                "dense_Wa_norm_update": dense_Wa_norm_update.norm().item(),
+                "mlp_h24h_Wa_norm_update": mlp_h24h_Wa_norm_update.norm().item(),
+                "mlp_4h2h_Wa_norm_update": mlp_4h2h_Wa_norm_update.norm().item(),
+                "qkv_Wb_norm_update": qkv_Wb_norm_update.norm().item(),
+                "dense_Wb_norm_update": dense_Wb_norm_update.norm().item(),
+                "mlp_h24h_Wb_norm_update": mlp_h24h_Wb_norm_update.norm().item(),
+                "mlp_4h2h_Wb_norm_update": mlp_4h2h_Wb_norm_update.norm().item(),
                 },
                 step=update_step,
             )
