@@ -389,14 +389,14 @@ def main(args):
         else:
             logger.warning(f"Training config not found in the existing save directory {args.save_dir}.")
 
-        training_state, resume_from = training_utils.get_last_training_state(args.save_dir)
+        # training_state, resume_from = training_utils.get_last_training_state(args.save_dir)
+        #
+        # if args.resume_from is None:
+        #     args.resume_from = resume_from
 
-        if args.resume_from is None:
-            args.resume_from = resume_from
-
-        if training_state is not None:
-            wandb_id = training_state["wandb_id"]
-        logger.info(f"Resuming training from {resume_from} with wandb id {wandb_id}")
+        # if training_state is not None:
+        #     wandb_id = training_state["wandb_id"]
+        # logger.info(f"Resuming training from {resume_from} with wandb id {wandb_id}")
 
     dist.barrier()  # guarantees none of the workers will read save_dir above here before it's created by rank 0
 
@@ -569,7 +569,7 @@ def main(args):
         global_step = _old_state["global_step"]
         # We do overwrite update_step here to correctly initialize the scheduler
         # which should start from warmed_up_model's update step or zero
-        _update_step = _old_state["update_step"]
+        update_step = _old_state["update_step"]
         tokens_seen = _old_state["tokens_seen"]
         tokens_seen_before = _old_state["tokens_seen_before"]
         n_lora_restarts = _old_state["n_lora_restarts"]
@@ -577,7 +577,7 @@ def main(args):
         logger.info(f"update_step       : {update_step}")
         logger.info(f"tokens_seen       : {tokens_seen}")
         logger.info(f"tokens_seen_before: {tokens_seen_before}")
-        logger.info(f"Will train for {args.num_training_steps - _update_step} update steps")
+        logger.info(f"Will train for {args.num_training_steps - update_step} update steps")
 
         if args.megatron_dataset_config is not None:
             train_loader.batch_sampler.start_iter = global_step
@@ -677,6 +677,7 @@ def main(args):
         raise ValueError(f"Optimizer {args.optimizer} not supported")
 
     scheduler_start_step = update_step
+    logger.info(f"update_step: {update_step}")
     _scheduler_steps = args.num_training_steps - scheduler_start_step
     logger.info(f"Scheduler will run for {_scheduler_steps} update steps")
     scheduler = training_utils.get_scheculer(
@@ -690,6 +691,7 @@ def main(args):
         adjust_step=args.adjust_step,
     )
 
+
     if args.resume_from:
         logger.info("Setting scheduler to the same state as in the checkpoint")
         for _ in range(update_step):
@@ -701,6 +703,20 @@ def main(args):
         if args.load_optimizer_state_on_resume:
             _optimizer_dir = args.resume_from
             optimizer_checkpoint = torch.load(os.path.join(_optimizer_dir, "optimizer.pt"), map_location="cpu")
+            ####################### Added by XY ####################################
+            # change initial_lr = 0 to optimizer state_dict
+            # optimizer_state = optimizer_checkpoint['optimizer']
+            # for param_groups in optimizer_state['param_groups']:
+            #     param_groups['initial_lr'] = 0
+            # # change base_lrs = 0 to scheduler state_dict
+            # scheduler_state = optimizer_checkpoint['scheduler']
+            # logger.info(f" scheduler_state: {scheduler_state}")
+            # exit()
+            # num_param_groups = len(optimizer_state['param_groups'])
+            # scheduler_state['base_lrs'] = [0] * num_param_groups
+            # optimizer.load_state_dict(optimizer_state)
+            # scheduler.load_state_dict(scheduler_state)
+            ##########################################################
             optimizer.load_state_dict(optimizer_checkpoint["optimizer"])
             scheduler.load_state_dict(optimizer_checkpoint["scheduler"])
             update_step = optimizer_checkpoint["update_step"]
@@ -765,6 +781,34 @@ def main(args):
         # doesn't jump around when changing from external display to laptop
         pbar = tqdm(total=args.num_training_steps - update_step, desc="Update steps", ncols=80)
 
+        ##################### Added by XY ##################################################
+        # weight matrices for linear projections
+        _model = model.wrapped_model.gpt_neox if args.use_peft else model.module.model
+
+        layer_qkv_W0 = _model.layers[2].attention.query_key_value.weight
+        layer_dense_W0 = _model.layers[2].attention.dense.weight
+        layer_mlp_h24h_W0 = _model.layers[2].mlp.dense_h_to_4h.weight
+        layer_mlp_4h2h_W0 = _model.layers[2].mlp.dense_4h_to_h.weight
+
+        # WaWb after initialization
+        if args.use_peft:
+            qkv_Wa_0 = _model.layers[2].attention.query_key_value.lora_A.weight
+            qkv_Wb_0 = _model.layers[2].attention.query_key_value.lora_B.weight
+            qkv_WaWb_0 = qkv_Wa_0.T @ qkv_Wb_0.T
+
+            dense_Wa_0 = _model.layers[2].attention.dense.lora_A.weight
+            dense_Wb_0 = _model.layers[2].attention.dense.lora_B.weight
+            dense_WaWb_0 = dense_Wa_0.T @ dense_Wb_0.T
+
+            mlp_h24h_Wa_0 = _model.layers[2].mlp.dense_h_to_4h.lora_A.weight
+            mlp_h24h_Wb_0 = _model.layers[2].mlp.dense_h_to_4h.lora_B.weight
+            mlp_h24h_WaWb_0 = mlp_h24h_Wa_0.T @ mlp_h24h_Wb_0.T
+
+            mlp_4h2h_Wa_0 = _model.layers[2].mlp.dense_4h_to_h.lora_A.weight
+            mlp_4h2h_Wb_0 = _model.layers[2].mlp.dense_4h_to_h.lora_B.weight
+            mlp_4h2h_WaWb_0 = mlp_4h2h_Wa_0.T @ mlp_4h2h_Wb_0.T
+
+        ####################################################################################
     for batch in train_loader:
         global_step += 1
         local_step += 1
@@ -829,7 +873,7 @@ def main(args):
         loss_info = torch.zeros_like(loss_info)
 
         if local_step > args.gradient_accumulation and update_step % args.save_every == 0:
-            current_model_directory = f"{args.save_dir}/model_{update_step}"
+            current_model_directory = f"{args.save_dir}/checkpoint_{args.model_revision}/reset_{args.relora}/lr_{args.lr}"
             logger.info(f"Saving model and optimizer to {current_model_directory}, update step {update_step}")
             training_state_checkpoint = {
                 "global_step": global_step,
@@ -915,6 +959,20 @@ def main(args):
 
         if can_reset_optimizer and (update_step - scheduler_start_step) % args.cycle_length == 2:
             logger.info(f"First step after optimizer reset lr is {optimizer.param_groups[0]['lr']}")
+            ##################### Added by XY ##################################################
+            # update to original weight matrices after reset
+            layer_qkv_Wi = _model.layers[2].attention.query_key_value.weight
+            layer_dense_Wi = _model.layers[2].attention.dense.weight
+            layer_mlp_h24h_Wi = _model.layers[2].mlp.dense_h_to_4h.weight
+            layer_mlp_4h2h_Wi = _model.layers[2].mlp.dense_4h_to_h.weight
+
+            qkv_W_norm_update = (layer_qkv_W0 - layer_qkv_Wi)
+            dense_W_norm_update = (layer_dense_W0 - layer_dense_Wi)
+            mlp_h24h_W_norm_update = (layer_mlp_h24h_W0 - layer_mlp_h24h_Wi)
+            mlp_4h2h_W_norm_update = (layer_mlp_4h2h_W0 - layer_mlp_4h2h_Wi)
+            #####################################################################################
+
+
 
         lr = optimizer.param_groups[0]["lr"]
         tokens_in_update = tokens_seen - tokens_seen_before
@@ -922,6 +980,32 @@ def main(args):
         batches_in_update = args.gradient_accumulation * world_size
 
         if global_rank == 0:
+            ##################### Added by XY ##################################################
+            # update of WaWb
+            if args.use_peft:
+                qkv_Wa_i = _model.layers[2].attention.query_key_value.lora_A.weight
+                qkv_Wb_i = _model.layers[2].attention.query_key_value.lora_B.weight
+                qkv_WaWb_i = qkv_Wa_i.T @ qkv_Wb_i.T
+
+                dense_Wa_i = _model.layers[2].attention.dense.lora_A.weight
+                dense_Wb_i = _model.layers[2].attention.dense.lora_B.weight
+                dense_WaWb_i = dense_Wa_i.T @ dense_Wb_i.T
+
+                mlp_h24h_Wa_i = _model.layers[2].mlp.dense_h_to_4h.lora_A.weight
+                mlp_h24h_Wb_i = _model.layers[2].mlp.dense_h_to_4h.lora_B.weight
+                mlp_h24h_WaWb_i = mlp_h24h_Wa_i.T @ mlp_h24h_Wb_i.T
+
+                mlp_4h2h_Wa_i = _model.layers[2].mlp.dense_4h_to_h.lora_A.weight
+                mlp_4h2h_Wb_i = _model.layers[2].mlp.dense_4h_to_h.lora_B.weight
+                mlp_4h2h_WaWb_i = mlp_4h2h_Wa_i.T @ mlp_4h2h_Wb_i.T
+
+                qkv_WaWb_norm_update = (qkv_WaWb_0 - qkv_WaWb_i)
+                dense_WaWb_norm_update = (dense_WaWb_0- dense_WaWb_i)
+                mlp_h24h_WaWb_norm_update = (mlp_h24h_WaWb_0 - mlp_h24h_WaWb_i)
+                mlp_4h2h_WaWb_norm_update = (mlp_4h2h_WaWb_0 - mlp_4h2h_WaWb_i)
+
+            ##################### Added by XY ##################################################
+
             wandb.log({
                 "loss": _loss,
                 "lr": lr,
@@ -932,6 +1016,14 @@ def main(args):
                 "throughput_batches": batches_in_update / update_time,
                 "n_lora_restarts": n_lora_restarts,
                 "n_optimizer_resets": n_optimizer_resets,
+                "qkv_W_norm_update": qkv_W_norm_update.norm().item(),
+                "dense_W_norm_update": dense_W_norm_update.norm().item(),
+                "mlp_h24h_W_norm_update": mlp_h24h_W_norm_update.norm().item(),
+                "mlp_4h2h_W_norm_update": mlp_4h2h_W_norm_update.norm().item(),
+                "qkv_WaWb_norm_update": qkv_WaWb_norm_update.norm().item(),
+                "dense_WaWb_norm_update": dense_WaWb_norm_update.norm().item(),
+                "mlp_h24h_WaWb_norm_update": mlp_h24h_WaWb_norm_update.norm().item(),
+                "mlp_4h2h_WaWb_norm_update": mlp_4h2h_WaWb_norm_update.norm().item(),
                 },
                 step=update_step,
             )
@@ -954,7 +1046,7 @@ def main(args):
     logger.info("Training finished")
     if global_rank == 0: pbar.close()
 
-    current_model_directory = f"{args.save_dir}/model_{update_step}"
+    current_model_directory = f"{args.save_dir}/checkpoint_{args.model_revision}/reset_{args.relora}/lr_{args.lr}"
     if not os.path.exists(current_model_directory):
         logger.info(f"Saving model and optimizer to {current_model_directory}, update step {update_step}")
         training_state_checkpoint = {
@@ -978,7 +1070,7 @@ def main(args):
     # Final evaluation
     logger.info("Running final evaluation")
     model.eval()
-    del loss, optimizer, scheduler
+    del _loss, optimizer, scheduler
     import gc; gc.collect()
     torch.cuda.empty_cache()
 
@@ -986,13 +1078,14 @@ def main(args):
     full_batch_loss, evaluated_on_tokens = evaluate_model(
         model, train_loader, device, target_eval_tokens=tokens_seen
     )
-    wandb.log({
-        "full_batch_loss": full_batch_loss,
-        "full_batch_eval_tokens": evaluated_on_tokens,
-         },
-         step=update_step
-        )
 
+    if global_rank == 0:
+        wandb.log({
+            "full_batch_loss": full_batch_loss,
+            "full_batch_eval_tokens": evaluated_on_tokens,
+             },
+             step=update_step
+            )
 
     total_loss, evaluated_on_tokens = evaluate_model(
         model, eval_loader, device,
